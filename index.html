@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dev's Quest: A Saga do Código</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        body {
+            font-family: 'Press Start 2P', cursive;
+            background-color: #5c94fc;
+            color: #ffffff;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .game-container {
+            width: 100%;
+            max-width: 800px;
+            height: 100%;
+            max-height: 600px;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border: 5px solid #000;
+            position: relative;
+        }
+
+        canvas {
+            background-color: #5c94fc;
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        #questionModal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #2a2a2a;
+            border: 5px solid #000;
+            padding: 2rem;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 15px rgba(0,0,0,0.4);
+            text-align: center;
+            z-index: 100;
+        }
+
+        #questionModal h2 {
+            font-size: 1rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+        
+        #questionModal code {
+            background-color: #444;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .option-btn {
+            display: block;
+            width: 100%;
+            padding: 0.8rem;
+            margin: 0.5rem 0;
+            background-color: #4a4a4a;
+            color: #fff;
+            border: 2px solid #000;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: background-color 0.2s, transform 0.2s;
+        }
+        
+        .option-btn:hover {
+            background-color: #6a6a6a;
+            transform: translateY(-2px);
+        }
+
+        #messageOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+            text-align: center;
+        }
+
+        #messageOverlay h1 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            text-shadow: 3px 3px 0 #000;
+        }
+        #messageOverlay p {
+            font-size: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        #messageOverlay button {
+            padding: 1rem 2rem;
+            margin-top: 10px;
+            font-size: 1rem;
+            background-color: #f7b42c;
+            border: 3px solid #000;
+            color: #000;
+            cursor: pointer;
+            box-shadow: 4px 4px 0px #000;
+            transition: all 0.1s ease-in-out;
+        }
+        #messageOverlay button:hover {
+            transform: translate(2px, 2px);
+            box-shadow: 2px 2px 0px #000;
+        }
+        #changeCostumeButton {
+            background-color: #4CAF50;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="questionModal" class="hidden">
+            <h2 id="questionText"></h2>
+            <div id="optionsContainer"></div>
+        </div>
+        <div id="messageOverlay">
+            <h1>Dev's Quest</h1>
+            <p>Ajude o Dev a consertar o Código-Reino!</p>
+            <p>Use ← → para mover e Espaço para pular.</p>
+            <div>
+                <button id="startButton">Iniciar Jogo</button>
+            </div>
+            <div>
+                <button id="changeCostumeButton">Trocar Camisa (Padrão)</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const gameContainer = document.querySelector('.game-container');
+
+        let isGameRunning = false, isPaused = false, currentLevel = 1;
+        let player, platforms, enemies, questionBlocks, keys, camera, levelWidth, levelHeight, playerLives, score, correctAnswersThisLevel, bonusLifeForNextLevel = false;
+        let isFlashMode = false, currentCostumeIndex = 0;
+        const gravity = 0.5;
+
+        // --- Sound Effects ---
+        let sounds;
+        function setupSounds() {
+            sounds = {
+                jump: new Tone.Synth({ oscillator: { type: "triangle" }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.1 } }).toDestination(),
+                stomp: new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.005, decay: 0.2, sustain: 0, release: 0.1 } }).toDestination(),
+                correct: new Tone.Synth({ oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.2 } }).toDestination(),
+                incorrect: new Tone.Synth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.4, sustain: 0, release: 0.1 } }).toDestination(),
+                collect: new Tone.Synth({ oscillator: { type: "sawtooth" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.2, release: 0.2 } }).toDestination(),
+                loseLife: new Tone.MembraneSynth().toDestination(),
+                levelUp: new Tone.PolySynth(Tone.Synth).toDestination()
+            };
+        }
+
+        // --- Player Costumes ---
+        const costumes = [
+            { name: "Padrão", shirt: '#b22222', logo: '#ffd700' },
+            { name: "Lanterna", shirt: '#006400', logo: '#ffffff' },
+            { name: "Herói", shirt: '#00008b', logo: '#ff0000' },
+            { name: "Flash", shirt: '#ff0000', logo: '#ffff00' } 
+        ];
+
+        // --- Game Questions ---
+        const jsQuestions = [
+            { question: "Qual o resultado de '2' + 2 em JS?", options: ["4", "22", "Erro", "NaN"], answer: 1 },
+            { question: "Como se escreve um comentário de UMA linha?", options: ["// Comentário", "/* Comentário */", "<!-- Comentário -->", "# Comentário"], answer: 0 },
+            { question: "Qual função imprime algo no console?", options: ["print()", "log()", "console.log()", "debug()"], answer: 2 },
+            { question: "O que o operador `||` representa?", options: ["E lógico", "OU lógico", "Negação", "Igualdade"], answer: 1 },
+            { question: "Qual método remove o último elemento de um array?", options: [".pop()", ".shift()", ".push()", ".slice()"], answer: 0 },
+            { question: "Qual palavra-chave declara uma variável que não pode ser reatribuída?", options: ["var", "let", "const", "static"], answer: 2 },
+            { question: "O que `Math.random()` retorna?", options: ["Um nº entre 0 e 10", "Um nº entre 0 e 1", "Um nº inteiro", "Um nº negativo"], answer: 1 },
+            { question: "Como se declara uma variável em JavaScript?", options: ["var, let, const", "variable", "v", "let const"], answer: 0 },
+        ];
+        const htmlQuestions = [
+            { question: "Qual tag é usada para o maior título?", options: ["<h6>", "<p>", "<h1>", "<title>"], answer: 2 },
+            { question: "Qual tag cria uma lista NÃO ordenada?", options: ["<ol>", "<li>", "<ul>", "<dl>"], answer: 2 },
+            { question: "Qual atributo especifica o destino de um link?", options: ["src", "link", "target", "href"], answer: 3 },
+            { question: "Qual tag é usada para inserir uma imagem?", options: ["<image>", "<pic>", "<img>", "<figure>"], answer: 2 },
+            { question: "Qual o propósito da tag `<head>`?", options: ["Conteúdo principal", "Cabeçalho da página", "Metadados e links", "Rodapé"], answer: 2 },
+            { question: "Como se cria um campo de entrada de texto?", options: ["<input type='text'>", "<textfield>", "<input type='button'>", "<text>"], answer: 0 },
+            { question: "Qual tag define uma quebra de linha?", options: ["<break>", "<lb>", "<br>", "<hr>"], answer: 2 },
+            { question: "Qual tag é usada para criar um botão?", options: ["<input type='button'>", "<button>", "Ambas estão corretas", "Nenhuma está correta"], answer: 2 },
+            { question: "Qual tag define o corpo do documento HTML?", options: ["<body>", "<head>", "<!DOCTYPE html>", "<html>"], answer: 0 },
+        ];
+        const cssQuestions = [
+            { question: "Qual propriedade altera a cor de fundo?", options: ["color", "background-color", "font-color", "bgcolor"], answer: 1 },
+            { question: "O que a propriedade `display: none;` faz?", options: ["Aumenta o elemento", "Esconde o elemento", "Deixa transparente", "Muda a fonte"], answer: 1 },
+            { question: "O que o código `p { font-weight: bold; }` faz?", options: ["Muda a cor", "Aumenta a fonte", "Deixa em itálico", "Deixa em negrito"], answer: 3 },
+            { question: "Qual a diferença entre `margin` e `padding`?", options: ["Não há diferença", "Cor vs. Fundo", "Espaço externo vs. Interno", "Fonte vs. Tamanho"], answer: 2 },
+            { question: "Para que serve o seletor `:hover`?", options: ["Selecionar o primeiro item", "Estilo ao passar o mouse", "Estilo ao clicar", "Selecionar o último item"], answer: 1 },
+            { question: "O que `position: absolute;` faz?", options: ["Posiciona relativo à tela", "Posiciona relativo ao pai", "Centraliza o elemento", "Remove o elemento"], answer: 1 },
+            { question: "Qual a função do `z-index`?", options: ["Define a largura", "Define a altura", "Controla a sobreposição", "Define a rotação"], answer: 2 },
+            { question: "O que `flex-direction: column;` faz?", options: ["Itens em linha", "Itens em coluna", "Inverte a ordem", "Justifica o conteúdo"], answer: 1 },
+            { question: "Como você seleciona um elemento com id 'titulo'?", options: ["#titulo", ".titulo", "titulo", "*titulo"], answer: 0 },
+        ];
+        let currentQuestion = null;
+
+        class Player {
+             constructor(x, y) {
+                this.position = { x, y };
+                this.velocity = { x: 0, y: 0 };
+                this.width = 40;
+                this.height = 60;
+                this.speed = 5;
+                this.jumpForce = 12;
+                this.onGround = false;
+                this.invincible = false;
+                this.invincibilityTimer = 0;
+            }
+            draw() {
+                 if (this.invincible && Math.floor(Date.now() / 100) % 2 === 0) {
+                    return; // Efeito de piscar
+                }
+                
+                const camX = this.position.x - camera.x;
+                const camY = this.position.y - camera.y;
+
+                const costume = costumes[isFlashMode ? costumes.findIndex(c => c.name === "Flash") : currentCostumeIndex];
+
+                // Calças
+                ctx.fillStyle = '#654321'; // Marrom
+                ctx.fillRect(camX, camY + 35, this.width, 25);
+                // Camiseta
+                ctx.fillStyle = costume.shirt;
+                ctx.fillRect(camX, camY + 20, this.width, 20);
+                // Logo na camiseta
+                ctx.fillStyle = costume.logo;
+                ctx.beginPath();
+                ctx.arc(camX + this.width / 2, camY + 30, 8, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Cabeça
+                ctx.fillStyle = '#ffdba1'; // Pele
+                ctx.fillRect(camX + 5, camY, this.width - 10, 20);
+                // Cabelo
+                ctx.fillStyle = '#4a2d1b'; // Marrom escuro
+                ctx.fillRect(camX + 5, camY, this.width - 10, 8);
+                ctx.fillRect(camX + 3, camY + 5, 5, 5);
+                ctx.fillRect(camX + 32, camY + 5, 5, 5);
+                // Olhos
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(camX + 10, camY + 10, 5, 5);
+                ctx.fillRect(camX + 25, camY + 10, 5, 5);
+            }
+            update() {
+                this.position.x += this.velocity.x;
+                this.position.y += this.velocity.y;
+                if (this.position.y + this.height + this.velocity.y < levelHeight) {
+                    this.velocity.y += gravity;
+                }
+                if (this.position.x < 0) this.position.x = 0;
+                if (this.position.x + this.width > levelWidth) this.position.x = levelWidth - this.width;
+                this.onGround = false;
+
+                if (this.invincible) {
+                    this.invincibilityTimer--;
+                    if (this.invincibilityTimer <= 0) {
+                        this.invincible = false;
+                    }
+                }
+            }
+        }
+        class Platform {
+             constructor(x, y, width, height, type = 'grass') {
+                this.position = { x, y };
+                this.width = width;
+                this.height = height;
+                this.type = type;
+            }
+            draw() {
+                const camX = this.position.x - camera.x;
+                const camY = this.position.y - camera.y;
+                const colors = { 1: '#228b22', 2: '#4682B4', 3: '#DAA520' };
+                const groundColors = { 1: '#b97a57', 2: '#A9A9A9', 3: '#663399' };
+                const topColor = colors[currentLevel] || '#228b22';
+                const groundColor = groundColors[currentLevel] || '#b97a57';
+
+                ctx.fillStyle = groundColor;
+                ctx.fillRect(camX, camY, this.width, this.height);
+                
+                if (this.type === 'grass') {
+                    ctx.fillStyle = topColor;
+                    ctx.fillRect(camX, camY, this.width, 20);
+                    // Detalhe de grama
+                    for(let i=0; i < this.width; i+=10) {
+                        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                        ctx.fillRect(camX + i, camY, 2, 20);
+                    }
+                } else {
+                     // Detalhe de bloco/tijolo
+                    for(let i=0; i < this.width; i+=25) {
+                         for(let j=0; j < this.height; j+=25) {
+                            if((i/25 + j/25)%2 == 0) {
+                               ctx.fillStyle = 'rgba(0,0,0,0.1)';
+                               ctx.fillRect(camX+i, camY+j, 25, 25);
+                            }
+                         }
+                    }
+                }
+            }
+        }
+        class Enemy {
+             constructor(x, y) {
+                this.position = { x, y };
+                this.width = 40;
+                this.height = 40;
+                this.speed = 1 + (currentLevel * 0.5); 
+                this.direction = 1;
+                this.initialX = x;
+                this.range = 100;
+            }
+            draw() {
+                const camX = this.position.x - camera.x;
+                const camY = this.position.y - camera.y;
+
+                // Corpo do bug
+                ctx.fillStyle = '#d95763';
+                ctx.beginPath();
+                ctx.arc(camX + this.width / 2, camY + this.height / 2, this.width / 2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Olhos
+                ctx.fillStyle = '#fff';
+                ctx.beginPath();
+                ctx.arc(camX + 12, camY + 15, 5, 0, Math.PI * 2);
+                ctx.arc(camX + 28, camY + 15, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#000';
+                ctx.beginPath();
+                ctx.arc(camX + 13, camY + 16, 2, 0, Math.PI * 2);
+                ctx.arc(camX + 29, camY + 16, 2, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Antenas
+                ctx.strokeStyle = '#000';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(camX + 10, camY + 10);
+                ctx.lineTo(camX + 5, camY - 5);
+                ctx.moveTo(camX + 30, camY + 10);
+                ctx.lineTo(camX + 35, camY - 5);
+                ctx.stroke();
+            }
+            update() {
+                this.position.x += this.speed * this.direction;
+                if (this.position.x > this.initialX + this.range || this.position.x < this.initialX - this.range) {
+                    this.direction *= -1;
+                }
+            }
+        }
+        class QuestionBlock {
+             constructor(x, y) {
+                this.position = {x, y};
+                this.width = 50;
+                this.height = 50;
+                this.collected = false;
+            }
+            draw() {
+                if (!this.collected) {
+                    const camX = this.position.x - camera.x;
+                    const camY = this.position.y - camera.y;
+                    
+                    const pulse = Math.sin(Date.now() / 200) * 5; // Efeito de pulsação
+                    ctx.fillStyle = `rgb(${255}, ${215 + pulse}, ${0})`;
+                    ctx.fillRect(camX - pulse/2, camY - pulse/2, this.width + pulse, this.height + pulse);
+                    
+                    ctx.fillStyle = '#000';
+                    ctx.font = '30px "Press Start 2P"';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('</>', camX + this.width / 2, camY + 38);
+                }
+            }
+        }
+        
+        function drawBackground() {
+            // Montanhas distantes (Parallax Layer 3)
+            ctx.fillStyle = '#2c3e50';
+            ctx.beginPath();
+            ctx.moveTo(0, levelHeight - 50 - (camera.y / 4));
+            for (let i = 0; i < levelWidth; i += 50) {
+                const x = i - camera.x / 4;
+                const y = levelHeight - 100 - (Math.sin(i / 200) * 30);
+                ctx.lineTo(x, y);
+            }
+            ctx.lineTo(levelWidth - (camera.x / 4), levelHeight);
+            ctx.lineTo(0 - (camera.x / 4), levelHeight);
+            ctx.closePath();
+            ctx.fill();
+
+            // Nuvens (Parallax Layer 2)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            const cloudPositions = [100, 500, 900, 1500, 2100, 2800, 3500, 4200, 5000, 5600];
+            cloudPositions.forEach(baseX => {
+                const x = baseX - camera.x / 2;
+                ctx.fillRect(x, 100, 100, 50);
+                ctx.fillRect(x - 20, 120, 140, 30);
+            });
+        }
+
+
+        function initLevel(level) {
+            canvas.width = gameContainer.clientWidth;
+            canvas.height = gameContainer.clientHeight;
+            
+            levelWidth = 6000;
+            levelHeight = canvas.height;
+            playerLives = 3 + (bonusLifeForNextLevel ? 1 : 0);
+            bonusLifeForNextLevel = false;
+            correctAnswersThisLevel = 0;
+
+            player = new Player(100, 100);
+            player.speed = isFlashMode ? 8 : 5; // Mais rápido no modo Flash
+            keys = { right: false, left: false, up: false };
+            camera = { x: 0, y: 0 };
+            
+            platforms = [];
+            enemies = [];
+            questionBlocks = [];
+
+            const enemyHeight = 40;
+
+            // Chão principal
+            platforms.push(new Platform(0, levelHeight - 50, levelWidth, 50));
+            
+            switch(level) {
+                case 1: // JavaScript Level - 8 Blocks
+                    platforms.push(...[
+                        new Platform(400, levelHeight - 150, 150, 50, 'block'),
+                        new Platform(700, levelHeight - 250, 150, 50, 'block'),
+                        new Platform(1100, levelHeight - 200, 200, 50, 'block'),
+                        new Platform(1500, levelHeight - 150, 300, 50, 'block'),
+                        new Platform(2000, levelHeight - 250, 100, 50, 'block'),
+                        new Platform(2200, levelHeight - 350, 100, 50, 'block'),
+                        new Platform(2500, levelHeight - 200, 250, 50, 'block'),
+                        new Platform(2900, levelHeight - 150, 150, 50, 'block'),
+                        new Platform(3200, levelHeight - 250, 100, 50, 'block'),
+                        new Platform(3400, levelHeight - 350, 100, 50, 'block'),
+                        new Platform(3800, levelHeight - 200, 300, 50, 'block'),
+                        new Platform(4300, levelHeight - 150, 200, 50, 'block'),
+                        new Platform(4800, levelHeight - 250, 250, 50, 'block'), // Plataforma mais larga para o inimigo
+                        new Platform(5050, levelHeight - 300, 100, 50, 'block'), // Plataforma intermediária
+                        new Platform(5200, levelHeight - 350, 100, 50, 'block'),
+                    ]);
+                    enemies.push(...[
+                        new Enemy(600, (levelHeight - 50) - enemyHeight),
+                        new Enemy(1200, (levelHeight - 50) - enemyHeight),
+                        new Enemy(1600, (levelHeight - 150) - enemyHeight),
+                        new Enemy(2600, (levelHeight - 200) - enemyHeight),
+                        new Enemy(3300, (levelHeight - 50) - enemyHeight),
+                        new Enemy(3900, (levelHeight - 200) - enemyHeight),
+                        new Enemy(4900, (levelHeight - 250) - enemyHeight),
+                    ]);
+                    questionBlocks.push(...[
+                        new QuestionBlock(450, levelHeight - 220),
+                        new QuestionBlock(750, levelHeight - 320),
+                        new QuestionBlock(1200, levelHeight - 270),
+                        new QuestionBlock(2025, levelHeight - 320),
+                        new QuestionBlock(2225, levelHeight - 420),
+                        new QuestionBlock(3225, levelHeight - 320),
+                        new QuestionBlock(4350, levelHeight - 220),
+                        new QuestionBlock(5225, levelHeight - 420),
+                    ]);
+                    break;
+                case 2: // HTML Level - 9 Blocks
+                    platforms.push(...[
+                        new Platform(300, levelHeight - 180, 200, 50, 'block'),
+                        new Platform(600, levelHeight - 250, 50, 50, 'block'),
+                        new Platform(750, levelHeight - 320, 50, 50, 'block'),
+                        new Platform(900, levelHeight - 250, 50, 50, 'block'),
+                        new Platform(1200, levelHeight - 150, 400, 50, 'block'),
+                        new Platform(1800, levelHeight - 220, 200, 50, 'block'),
+                        new Platform(1950, levelHeight - 260, 100, 50, 'block'), // Plataforma Intermediária
+                        new Platform(2100, levelHeight - 300, 200, 50, 'block'),
+                        new Platform(2500, levelHeight - 150, 150, 50, 'block'),
+                        new Platform(2800, levelHeight - 250, 100, 50, 'block'),
+                        new Platform(3100, levelHeight - 180, 300, 50, 'block'),
+                        new Platform(3500, levelHeight - 280, 50, 50, 'block'),
+                        new Platform(3700, levelHeight - 350, 200, 50, 'block'),
+                        new Platform(4100, levelHeight - 200, 100, 50, 'block'),
+                        new Platform(4400, levelHeight - 150, 100, 50, 'block'),
+                        new Platform(4700, levelHeight - 250, 300, 50, 'block'),
+                        new Platform(5200, levelHeight - 300, 150, 50, 'block'),
+                    ]);
+                     enemies.push(...[
+                        new Enemy(400, (levelHeight - 180) - enemyHeight),
+                        new Enemy(1300, (levelHeight - 150) - enemyHeight),
+                        new Enemy(1900, (levelHeight - 220) - enemyHeight),
+                        new Enemy(2600, (levelHeight - 50) - enemyHeight),
+                        new Enemy(3200, (levelHeight - 180) - enemyHeight),
+                        new Enemy(4800, (levelHeight - 250) - enemyHeight),
+                        new Enemy(5500, (levelHeight - 50) - enemyHeight),
+                    ]);
+                    questionBlocks.push(...[
+                        new QuestionBlock(350, levelHeight - 250),
+                        new QuestionBlock(750, levelHeight - 400),
+                        new QuestionBlock(1400, levelHeight - 220),
+                        new QuestionBlock(1975, levelHeight - 330), // Nova Pergunta
+                        new QuestionBlock(2150, levelHeight - 370),
+                        new QuestionBlock(2825, levelHeight - 320),
+                        new QuestionBlock(3750, levelHeight - 420),
+                        new QuestionBlock(4125, levelHeight - 270),
+                        new QuestionBlock(5250, levelHeight - 370),
+                    ]);
+                    break;
+                case 3: // CSS Level - 9 Blocks
+                    platforms.push(...[
+                        new Platform(250, levelHeight - 130, 100, 50, 'block'),
+                        new Platform(450, levelHeight - 210, 100, 50, 'block'),
+                        new Platform(650, levelHeight - 290, 100, 50, 'block'),
+                        new Platform(900, levelHeight - 200, 300, 50, 'block'),
+                        new Platform(1300, levelHeight - 300, 50, 50, 'block'),
+                        new Platform(1500, levelHeight - 200, 200, 50, 'block'),
+                        new Platform(1800, levelHeight - 350, 250, 50, 'block'),
+                        new Platform(2300, levelHeight - 250, 100, 50, 'block'),
+                        new Platform(2500, levelHeight - 150, 100, 50, 'block'),
+                        new Platform(2800, levelHeight - 280, 200, 50, 'block'),
+                        new Platform(3200, levelHeight - 180, 150, 50, 'block'),
+                        new Platform(3500, levelHeight - 250, 50, 50, 'block'),
+                        new Platform(3650, levelHeight - 320, 50, 50, 'block'),
+                        new Platform(3800, levelHeight - 390, 50, 50, 'block'),
+                        new Platform(4100, levelHeight - 200, 300, 50, 'block'),
+                        new Platform(4600, levelHeight - 300, 200, 50, 'block'),
+                        new Platform(5000, levelHeight - 150, 100, 50, 'block'),
+                        new Platform(5300, levelHeight - 250, 200, 50, 'block'),
+                    ]);
+                     enemies.push(...[
+                        new Enemy(1000, (levelHeight - 200) - enemyHeight),
+                        new Enemy(1600, (levelHeight - 200) - enemyHeight),
+                        new Enemy(1900, (levelHeight - 350) - enemyHeight),
+                        new Enemy(2400, (levelHeight - 50) - enemyHeight),
+                        new Enemy(2850, (levelHeight - 280) - enemyHeight),
+                        new Enemy(4200, (levelHeight - 200) - enemyHeight),
+                        new Enemy(4700, (levelHeight - 300) - enemyHeight),
+                        new Enemy(5600, (levelHeight - 50) - enemyHeight),
+                    ]);
+                    questionBlocks.push(...[
+                        new QuestionBlock(275, levelHeight - 200),
+                        new QuestionBlock(675, levelHeight - 360),
+                        new QuestionBlock(1300, levelHeight - 370),
+                        new QuestionBlock(1925, levelHeight - 420),
+                        new QuestionBlock(2525, levelHeight - 220),
+                        new QuestionBlock(3250, levelHeight - 250),
+                        new QuestionBlock(3800, levelHeight - 460),
+                        new QuestionBlock(4675, levelHeight - 370),
+                        new QuestionBlock(5350, levelHeight - 320),
+                    ]);
+                    break;
+            }
+        }
+
+        function handleKeyDown(e) {
+            if (isPaused) return;
+            switch(e.code) {
+                case 'ArrowLeft': keys.left = true; break;
+                case 'ArrowRight': keys.right = true; break;
+                case 'Space': if (player.onGround) { player.velocity.y = -player.jumpForce; sounds.jump.triggerAttackRelease("C5", "8n"); } break;
+            }
+        }
+        function handleKeyUp(e) {
+            if (isPaused) return;
+            switch(e.code) {
+                case 'ArrowLeft': keys.left = false; break;
+                case 'ArrowRight': keys.right = false; break;
+            }
+        }
+
+        function checkCollisions() {
+            platforms.forEach(platform => {
+                if (player.position.y + player.height <= platform.position.y &&
+                    player.position.y + player.height + player.velocity.y >= platform.position.y &&
+                    player.position.x + player.width >= platform.position.x &&
+                    player.position.x <= platform.position.x + platform.width) {
+                    player.velocity.y = 0;
+                    player.onGround = true;
+                    player.position.y = platform.position.y - player.height;
+                }
+            });
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                if (player.position.x < enemy.position.x + enemy.width &&
+                    player.position.x + player.width > enemy.position.x &&
+                    player.position.y < enemy.position.y + enemy.height &&
+                    player.position.y + player.height > enemy.position.y) {
+                    
+                    if (isFlashMode) {
+                        enemies.splice(i, 1);
+                        sounds.stomp.triggerAttackRelease("E4", "8n");
+                        score += 100;
+                    } else if (player.velocity.y > 0 && (player.position.y + player.height - player.velocity.y) <= enemy.position.y) {
+                        enemies.splice(i, 1);
+                        player.velocity.y = -player.jumpForce / 2;
+                        sounds.stomp.triggerAttackRelease("E4", "8n");
+                        score += 100;
+                    } else if (!player.invincible) { 
+                        playerLives--;
+                        sounds.loseLife.triggerAttackRelease("C2", "8n");
+                        player.invincible = true;
+                        player.invincibilityTimer = 120;
+                        if (playerLives <= 0) {
+                            gameOver("Você foi pego por um bug!");
+                            break; 
+                        }
+                    }
+                }
+            }
+
+            questionBlocks.forEach(block => {
+                if (!block.collected &&
+                    player.position.x < block.position.x + block.width &&
+                    player.position.x + player.width > block.position.x &&
+                    player.position.y < block.position.y + block.height &&
+                    player.position.y + player.height > block.position.y) {
+                        block.collected = true;
+                        sounds.collect.triggerAttackRelease("G5", "16n");
+                        askQuestion();
+                }
+            });
+            
+            if (player.position.y > levelHeight) {
+                playerLives = 0;
+                gameOver("Você caiu no limbo do código!");
+            }
+        }
+        
+        function askQuestion() {
+            isPaused = true;
+            player.velocity.x = 0; keys.left = false; keys.right = false;
+            
+            let questionsPool;
+            if(currentLevel === 1) questionsPool = jsQuestions;
+            else if(currentLevel === 2) questionsPool = htmlQuestions;
+            else questionsPool = cssQuestions;
+
+            const availableQuestions = questionsPool.filter(q => !q.asked);
+            if (availableQuestions.length === 0) {
+                isPaused = false; return;
+            }
+
+            const qIndex = Math.floor(Math.random() * availableQuestions.length);
+            currentQuestion = availableQuestions[qIndex];
+            currentQuestion.asked = true;
+
+            const modal = document.getElementById('questionModal');
+            document.getElementById('questionText').innerHTML = currentQuestion.question;
+            const optionsContainer = document.getElementById('optionsContainer');
+            optionsContainer.innerHTML = '';
+            
+            currentQuestion.options.forEach((option, index) => {
+                const button = document.createElement('button');
+                button.textContent = option;
+                button.classList.add('option-btn');
+                button.onclick = () => checkAnswer(index);
+                optionsContainer.appendChild(button);
+            });
+            
+            modal.classList.remove('hidden');
+        }
+
+        function checkAnswer(selectedIndex) {
+            document.getElementById('questionModal').classList.add('hidden');
+            if (selectedIndex === currentQuestion.answer) {
+                player.velocity.y = -player.jumpForce / 1.5;
+                sounds.correct.triggerAttackRelease("C5", "16n", "+0.2");
+                sounds.correct.triggerAttackRelease("G5", "16n", "+0.4");
+                correctAnswersThisLevel++;
+            } else {
+                playerLives--;
+                sounds.incorrect.triggerAttackRelease("C3", "4n");
+                if (playerLives <= 0) {
+                    isPaused = false;
+                    gameOver("Você errou muitas perguntas!");
+                    return;
+                }
+            }
+            isPaused = false;
+            if (isGameRunning) animate();
+        }
+
+        function gameOver(message) {
+            isGameRunning = false;
+            isFlashMode = false;
+            const overlay = document.getElementById('messageOverlay');
+            overlay.querySelector('h1').textContent = "Game Over";
+            overlay.querySelector('p').textContent = `${message} Sua pontuação: ${score}`;
+            overlay.querySelector('button#startButton').textContent = "Tentar Novamente";
+            overlay.style.display = 'flex';
+        }
+
+        function levelComplete() {
+            isGameRunning = false;
+            
+            const totalQuestionsInLevel = (
+                currentLevel === 1 ? jsQuestions.length :
+                currentLevel === 2 ? htmlQuestions.length : cssQuestions.length
+            );
+
+            let message = "Prepare-se para o próximo desafio!";
+            if(correctAnswersThisLevel === totalQuestionsInLevel) {
+                bonusLifeForNextLevel = true;
+                isFlashMode = true;
+                message = "Bazinga! Você acertou tudo! Ganhou uma vida e a skin Flash!";
+                sounds.levelUp.triggerAttackRelease(["C4", "E4", "G4", "C5"], "8n");
+            } else {
+                isFlashMode = false;
+                sounds.levelUp.triggerAttackRelease(["C4", "G4"], "8n");
+            }
+
+            const overlay = document.getElementById('messageOverlay');
+            overlay.querySelector('h1').textContent = `Nível ${currentLevel} Completo!`;
+            overlay.querySelector('p').textContent = message;
+            overlay.querySelector('button#startButton').textContent = "Próximo Nível";
+            overlay.style.display = 'flex';
+        }
+
+        function gameWin() {
+            isGameRunning = false;
+            isFlashMode = false;
+            sounds.levelUp.triggerAttackRelease(["C4", "E4", "G4", "C5", "G5", "C6"], "8n");
+            const overlay = document.getElementById('messageOverlay');
+            overlay.querySelector('h1').textContent = "Você Venceu!";
+            overlay.querySelector('p').textContent = `O Código-Reino está a salvo! Pontuação final: ${score}`;
+            overlay.querySelector('button#startButton').textContent = "Jogar Novamente";
+            overlay.style.display = 'flex';
+        }
+
+        function update() {
+            if (isPaused || !isGameRunning) return;
+
+            player.velocity.x = 0;
+            if (keys.left) player.velocity.x = -player.speed;
+            if (keys.right) player.velocity.x = player.speed;
+
+            player.update();
+            enemies.forEach(enemy => enemy.update());
+            checkCollisions();
+
+            camera.x = player.position.x - canvas.width / 3;
+            if (camera.x < 0) camera.x = 0;
+            if (camera.x > levelWidth - canvas.width) camera.x = levelWidth - canvas.width;
+            
+            if (player.position.x >= levelWidth - 100) {
+                if (currentLevel < 3) {
+                    levelComplete();
+                } else {
+                    gameWin();
+                }
+            }
+        }
+
+        function draw() {
+            if (!isGameRunning) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const bgColors = {1: '#5c94fc', 2: '#87CEEB', 3: '#483D8B'};
+            canvas.style.backgroundColor = bgColors[currentLevel];
+
+            drawBackground();
+
+            platforms.forEach(p => p.draw());
+            questionBlocks.forEach(b => b.draw());
+            enemies.forEach(e => e.draw());
+            player.draw();
+
+            // Desenha UI (Vidas e Pontos)
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px "Press Start 2P"';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText(`Vidas: ${playerLives}`, 20, 20);
+            
+            ctx.textAlign = 'right';
+            ctx.fillText(`Pontos: ${score}`, canvas.width - 20, 20);
+        }
+
+        function animate() {
+            if (!isGameRunning || isPaused) return;
+            requestAnimationFrame(animate);
+            update();
+            draw();
+        }
+        
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('keyup', handleKeyUp);
+        
+        window.addEventListener('resize', () => {
+            if(isGameRunning) {
+                canvas.width = gameContainer.clientWidth;
+                canvas.height = gameContainer.clientHeight;
+                levelHeight = canvas.height;
+            }
+        });
+
+        document.getElementById('startButton').addEventListener('click', async () => {
+            await Tone.start();
+            if (!sounds) setupSounds();
+
+            const overlay = document.getElementById('messageOverlay');
+            const buttonText = overlay.querySelector('button#startButton').textContent;
+
+            if (buttonText.includes('Próximo Nível')) {
+                currentLevel++;
+            } else {
+                currentLevel = 1;
+                score = 0;
+                isFlashMode = false;
+                bonusLifeForNextLevel = false;
+                [...jsQuestions, ...htmlQuestions, ...cssQuestions].forEach(q => q.asked = false); 
+            }
+
+            overlay.style.display = 'none';
+            isGameRunning = true;
+            isPaused = false;
+            initLevel(currentLevel);
+            animate();
+        });
+        
+        document.getElementById('changeCostumeButton').addEventListener('click', () => {
+            currentCostumeIndex = (currentCostumeIndex + 1) % (costumes.length - 1); // Exclui o Flash
+            const btn = document.getElementById('changeCostumeButton');
+            btn.textContent = `Trocar Camisa (${costumes[currentCostumeIndex].name})`;
+        });
+
+        document.getElementById('messageOverlay').style.display = 'flex';
+        document.getElementById('questionModal').classList.add('hidden');
+    </script>
+</body>
+</html>
+
